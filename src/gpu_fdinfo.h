@@ -62,7 +62,8 @@ private:
     float last_power = 0;
 
     std::ifstream gpu_clock_stream;
-    void find_intel_gt_dir();
+    void find_i915_gt_dir();
+    void find_xe_gt_dir();
     int get_gpu_clock();
 
 public:
@@ -109,7 +110,9 @@ public:
             find_intel_hwmon();
 
         if (module == "i915")
-            find_intel_gt_dir();
+            find_i915_gt_dir();
+        else if (module == "xe")
+            find_xe_gt_dir();
 
         std::thread thread(&GPU_fdinfo::main_thread, this);
         thread.detach();
