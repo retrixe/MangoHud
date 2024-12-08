@@ -244,6 +244,55 @@ int GPU_fdinfo::get_gpu_load()
     return result;
 }
 
+void GPU_fdinfo::find_intel_gt_dir()
+{
+    std::string device = "/sys/bus/pci/devices/" + pci_dev + "/drm";
+
+    auto dir_iterator = fs::directory_iterator(device);
+
+    // Find first dir which starts with name "card"
+    for (const auto& entry : fs::directory_iterator(device)) {
+        auto path = entry.path().string();
+        if (path.substr(device.size() + 1, 4) == "card") {
+            device = path;
+            break;
+        }
+    }
+
+    device += "/gt_cur_freq_mhz";
+
+    if (!fs::exists(device)) {
+        SPDLOG_WARN(
+            "Intel gt file ({}) not found. GPU clock will not be available.",
+            device
+        );
+        return;
+    }
+
+    gpu_clock_stream.open(device);
+
+    if (!gpu_clock_stream.good())
+        SPDLOG_WARN("Intel gt dir: failed to open {}", device);
+}
+
+int GPU_fdinfo::get_gpu_clock()
+{
+    // Only i915 currently supported
+    if (module != "i915" || !gpu_clock_stream.is_open())
+        return 0;
+
+    std::string clock_str;
+
+    gpu_clock_stream.seekg(0);
+
+    std::getline(gpu_clock_stream, clock_str);
+
+    if (clock_str.empty())
+        return 0;
+
+    return std::stoi(clock_str);
+}
+
 void GPU_fdinfo::main_thread()
 {
     while (!stop_thread) {
@@ -255,6 +304,7 @@ void GPU_fdinfo::main_thread()
         metrics.load = get_gpu_load();
         metrics.memoryUsed = get_memory_used();
         metrics.powerUsage = get_power_usage();
+        metrics.CoreClock = get_gpu_clock();
 
         SPDLOG_DEBUG(
             "pci_dev = {}, pid = {}, module = {}, load = {}, mem = {}, power = {}",

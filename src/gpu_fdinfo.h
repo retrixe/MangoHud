@@ -14,7 +14,6 @@
 #include <spdlog/spdlog.h>
 #include <map>
 #include <set>
-#include <unistd.h>
 
 class GPU_fdinfo {
 private:
@@ -46,7 +45,6 @@ private:
 
     void find_fd();
     void open_fdinfo_fd(std::string path);
-    void find_intel_hwmon();
 
     int get_gpu_load();
     uint64_t get_gpu_time();
@@ -58,9 +56,14 @@ private:
 
     float get_memory_used();
 
+    void find_intel_hwmon();
     float get_current_power();
     float get_power_usage();
     float last_power = 0;
+
+    std::ifstream gpu_clock_stream;
+    void find_intel_gt_dir();
+    int get_gpu_clock();
 
 public:
     GPU_fdinfo(const std::string module, const std::string pci_dev)
@@ -104,6 +107,9 @@ public:
 
         if (module == "i915" || module == "xe")
             find_intel_hwmon();
+
+        if (module == "i915")
+            find_intel_gt_dir();
 
         std::thread thread(&GPU_fdinfo::main_thread, this);
         thread.detach();
