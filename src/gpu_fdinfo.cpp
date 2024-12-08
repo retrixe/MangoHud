@@ -128,23 +128,102 @@ void GPU_fdinfo::find_intel_hwmon()
         return;
     }
 
-    hwmon += module == "i915" ? "/energy1_input" : "/energy2_input";
+    auto voltage = hwmon + (module == "i915" ? "/in0_input" : "/in1_input");
+    if (!fs::exists(voltage)) {
+        SPDLOG_DEBUG("Intel hwmon: Voltage reading not found at {}", hwmon);
+    } else {
+        SPDLOG_DEBUG("Intel hwmon: Voltage reading found at {}", voltage);
+        voltage_stream.open(voltage);
 
-    if (!fs::exists(hwmon)) {
-        SPDLOG_DEBUG("Intel hwmon: file {} doesn't exist.", hwmon);
-        return;
+        if (!voltage_stream.good())
+            SPDLOG_DEBUG("Intel hwmon: failed to open voltage reading {}", voltage);
     }
 
-    SPDLOG_DEBUG("Intel hwmon found: hwmon = {}", hwmon);
+    auto fan_speed = hwmon + "/fan1_input"; // Xe DRM doesn't support this yet
+    if (!fs::exists(fan_speed)) {
+        SPDLOG_DEBUG("Intel hwmon: Fan RPM reading not found at {}", hwmon);
+    } else {
+        SPDLOG_DEBUG("Intel hwmon: Fan RPM reading found at {}", fan_speed);
+        fan_speed_stream.open(fan_speed);
 
-    energy_stream.open(hwmon);
+        if (!fan_speed_stream.good())
+            SPDLOG_DEBUG("Intel hwmon: failed to open fan RPM reading {}", fan_speed);
+    }
 
-    if (!energy_stream.good())
-        SPDLOG_DEBUG("Intel hwmon: failed to open {}", hwmon);
+    auto temp = hwmon + "/temp1_input"; // Xe DRM doesn't support this yet
+    if (!fs::exists(temp)) {
+        SPDLOG_DEBUG("Intel hwmon: Temperature reading not found at {}", hwmon);
+    } else {
+        SPDLOG_DEBUG("Intel hwmon: Temperature reading found at {}", temp);
+        temp_stream.open(temp);
 
-    // Initialize value for the first time, otherwise delta will be very large
-    // and your gpu power usage will be like 1 million watts for a second.
-    this->last_power = get_current_power();
+        if (!temp_stream.good())
+            SPDLOG_DEBUG("Intel hwmon: failed to open temperature reading {}", temp);
+    }
+
+    auto energy = hwmon + (module == "i915" ? "/energy1_input" : "/energy2_input");
+    if (!fs::exists(energy)) {
+        SPDLOG_DEBUG("Intel hwmon: Energy reading not found at {}", hwmon);
+    } else {
+        SPDLOG_DEBUG("Intel hwmon: Energy reading found at {}", energy);
+        energy_stream.open(energy);
+
+        if (!energy_stream.good())
+            SPDLOG_DEBUG("Intel hwmon: failed to open energy reading {}", energy);
+
+        // Initialize value for the first time, otherwise delta will be very large
+        // and your gpu power usage will be like 1 million watts for a second.
+        this->last_power = get_current_power();
+    }
+}
+
+int GPU_fdinfo::get_current_voltage()
+{
+    if (!voltage_stream.is_open())
+        return 0;
+
+    std::string voltage_input_str;
+    voltage_stream.seekg(0);
+    std::getline(voltage_stream, voltage_input_str);
+
+    if (voltage_input_str.empty())
+        return 0;
+
+    return std::stoull(voltage_input_str);
+}
+
+int GPU_fdinfo::get_current_fan_speed()
+{
+    if (!fan_speed_stream.is_open())
+        return 0;
+
+    std::string fan_speed_input_str;
+    fan_speed_stream.seekg(0);
+    std::getline(fan_speed_stream, fan_speed_input_str);
+
+    if (fan_speed_input_str.empty())
+        return 0;
+
+    return std::stoull(fan_speed_input_str);
+}
+
+int GPU_fdinfo::get_current_temp()
+{
+    if (!temp_stream.is_open())
+        return 0.f;
+
+    std::string temp_input_str;
+    uint64_t temp_input;
+
+    temp_stream.seekg(0);
+    std::getline(temp_stream, temp_input_str);
+
+    if (temp_input_str.empty())
+        return 0.f;
+
+    temp_input = std::stoull(temp_input_str);
+
+    return temp_input / 1000;
 }
 
 float GPU_fdinfo::get_current_power()
@@ -351,9 +430,13 @@ void GPU_fdinfo::main_thread()
         gather_fdinfo_data();
 
         metrics.load = get_gpu_load();
+        metrics.temp = get_current_temp();
         metrics.memoryUsed = get_memory_used();
         metrics.powerUsage = get_power_usage();
         metrics.CoreClock = get_gpu_clock();
+        metrics.fan_speed = get_current_fan_speed();
+        metrics.voltage = get_current_voltage();
+        metrics.fan_rpm = true; // Fan data is pulled from hwmon
 
         SPDLOG_DEBUG(
             "pci_dev = {}, pid = {}, module = {}, load = {}, mem = {}, power = {}",

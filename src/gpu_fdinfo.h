@@ -33,6 +33,9 @@ private:
     mutable std::mutex metrics_mutex;
 
     std::vector<std::ifstream> fdinfo;
+    std::ifstream voltage_stream;
+    std::ifstream fan_speed_stream;
+    std::ifstream temp_stream;
     std::ifstream energy_stream;
 
     std::string drm_engine_type = "EMPTY";
@@ -57,6 +60,9 @@ private:
     float get_memory_used();
 
     void find_intel_hwmon();
+    int get_current_voltage();
+    int get_current_fan_speed();
+    int get_current_temp();
     float get_current_power();
     float get_power_usage();
     float last_power = 0;
