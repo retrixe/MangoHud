@@ -36,7 +36,8 @@ private:
     std::ifstream voltage_stream;
     std::ifstream fan_speed_stream;
     std::ifstream temp_stream;
-    std::ifstream energy_stream;
+    std::ifstream power_stream;
+    bool is_power_energy = false;
 
     std::string drm_engine_type = "EMPTY";
     std::string drm_memory_type = "EMPTY";

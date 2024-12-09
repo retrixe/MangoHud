@@ -113,6 +113,7 @@ float GPU_fdinfo::get_memory_used()
 std::regex voltage_regex("in(\\d+)_input");
 std::regex fan_speed_regex("fan(\\d+)_input");
 std::regex temp_regex("temp(\\d+)_input");
+std::regex power_regex("power(\\d+)_input");
 std::regex energy_regex("energy(\\d+)_input");
 
 void GPU_fdinfo::find_hwmon()
@@ -134,8 +135,8 @@ void GPU_fdinfo::find_hwmon()
         return;
     }
 
-    std::string voltage, fan_speed, temp, energy;
-    uint64_t voltage_id = 0, fan_speed_id = 0, temp_id = 0, energy_id = 0;
+    std::string voltage, fan_speed, temp, power, energy;
+    uint64_t voltage_id = 0, fan_speed_id = 0, temp_id = 0, power_id = 0, energy_id = 0;
 
     for (const auto &entry : fs::directory_iterator(hwmon)) {
         auto filename = entry.path().filename().string();
@@ -158,6 +159,12 @@ void GPU_fdinfo::find_hwmon()
             if (temp.empty() || id < temp_id) {
                 temp = entry.path().string();
                 temp_id = id;
+            }
+        } else if (std::regex_match(filename, matches, power_regex) && matches.size() == 2) {
+            auto id = std::stoull(matches[1].str());
+            if (power.empty() || id < power_id) {
+                power = entry.path().string();
+                power_id = id;
             }
         } else if (std::regex_match(filename, matches, energy_regex) && matches.size() == 2) {
             auto id = std::stoull(matches[1].str());
@@ -198,15 +205,22 @@ void GPU_fdinfo::find_hwmon()
             SPDLOG_DEBUG("hwmon: failed to open temperature reading {}", temp);
     }
 
-    if (energy.empty()) {
+    if (!power.empty()) {
+        SPDLOG_DEBUG("hwmon: Power reading found at {}", power);
+        power_stream.open(power);
+
+        if (!power_stream.good())
+            SPDLOG_DEBUG("hwmon: failed to open power reading {}", power);
+    } else if (energy.empty()) {
         SPDLOG_DEBUG("hwmon: Energy reading not found at {}", hwmon);
     } else {
         SPDLOG_DEBUG("hwmon: Energy reading found at {}", energy);
-        energy_stream.open(energy);
+        power_stream.open(energy);
 
-        if (!energy_stream.good())
+        if (!power_stream.good())
             SPDLOG_DEBUG("hwmon: failed to open energy reading {}", energy);
 
+        is_power_energy = true;
         // Initialize value for the first time, otherwise delta will be very large
         // and your gpu power usage will be like 1 million watts for a second.
         this->last_power = get_current_power();
@@ -264,26 +278,29 @@ int GPU_fdinfo::get_current_temp()
 
 float GPU_fdinfo::get_current_power()
 {
-    if (!energy_stream.is_open())
+    if (!power_stream.is_open())
         return 0.f;
 
-    std::string energy_input_str;
-    uint64_t energy_input;
+    std::string power_input_str;
+    uint64_t power_input;
 
-    energy_stream.seekg(0);
+    power_stream.seekg(0);
 
-    std::getline(energy_stream, energy_input_str);
+    std::getline(power_stream, power_input_str);
 
-    if (energy_input_str.empty())
+    if (power_input_str.empty())
         return 0.f;
 
-    energy_input = std::stoull(energy_input_str);
+    power_input = std::stoull(power_input_str);
 
-    return (float)energy_input / 1'000'000;
+    return (float)power_input / 1'000'000;
 }
 
 float GPU_fdinfo::get_power_usage()
 {
+    if (!is_power_energy)
+        return get_current_power();
+
     float now = get_current_power();
     float delta = now - this->last_power;
     delta /= (float)METRICS_UPDATE_PERIOD_MS / 1000;
