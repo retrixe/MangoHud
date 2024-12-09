@@ -1,3 +1,4 @@
+#include <regex>
 #include "gpu_fdinfo.h"
 namespace fs = ghc::filesystem;
 
@@ -109,14 +110,19 @@ float GPU_fdinfo::get_memory_used()
     return (float)total / 1024 / 1024;
 }
 
-void GPU_fdinfo::find_intel_hwmon()
+std::regex voltage_regex("in(\\d+)_input");
+std::regex fan_speed_regex("fan(\\d+)_input");
+std::regex temp_regex("temp(\\d+)_input");
+std::regex energy_regex("energy(\\d+)_input");
+
+void GPU_fdinfo::find_hwmon()
 {
     std::string device = "/sys/bus/pci/devices/";
     device += pci_dev;
     device += "/hwmon";
 
     if (!fs::exists(device)) {
-        SPDLOG_DEBUG("Intel hwmon directory {} doesn't exist.", device);
+        SPDLOG_DEBUG("hwmon directory {} doesn't exist.", device);
         return;
     }
 
@@ -124,52 +130,82 @@ void GPU_fdinfo::find_intel_hwmon()
     auto hwmon = dir_iterator->path().string();
 
     if (hwmon.empty()) {
-        SPDLOG_DEBUG("Intel hwmon directory is empty.");
+        SPDLOG_DEBUG("hwmon directory is empty.");
         return;
     }
 
-    auto voltage = hwmon + (module == "i915" ? "/in0_input" : "/in1_input");
-    if (!fs::exists(voltage)) {
-        SPDLOG_DEBUG("Intel hwmon: Voltage reading not found at {}", hwmon);
+    std::string voltage, fan_speed, temp, energy;
+    uint64_t voltage_id = 0, fan_speed_id = 0, temp_id = 0, energy_id = 0;
+
+    for (const auto &entry : fs::directory_iterator(hwmon)) {
+        auto filename = entry.path().filename().string();
+
+        std::smatch matches;
+        if (std::regex_match(filename, matches, voltage_regex) && matches.size() == 2) {
+            auto id = std::stoull(matches[1].str());
+            if (voltage.empty() || id < voltage_id) {
+                voltage = entry.path().string();
+                voltage_id = id;
+            }
+        } else if (std::regex_match(filename, matches, fan_speed_regex) && matches.size() == 2) {
+            auto id = std::stoull(matches[1].str());
+            if (fan_speed.empty() || id < fan_speed_id) {
+                fan_speed = entry.path().string();
+                fan_speed_id = id;
+            }
+        } else if (std::regex_match(filename, matches, temp_regex) && matches.size() == 2) {
+            auto id = std::stoull(matches[1].str());
+            if (temp.empty() || id < temp_id) {
+                temp = entry.path().string();
+                temp_id = id;
+            }
+        } else if (std::regex_match(filename, matches, energy_regex) && matches.size() == 2) {
+            auto id = std::stoull(matches[1].str());
+            if (energy.empty() || id < energy_id) {
+                energy = entry.path().string();
+                energy_id = id;
+            }
+        }
+    }
+
+    if (voltage.empty()) {
+        SPDLOG_DEBUG("hwmon: Voltage reading not found at {}", hwmon);
     } else {
-        SPDLOG_DEBUG("Intel hwmon: Voltage reading found at {}", voltage);
+        SPDLOG_DEBUG("hwmon: Voltage reading found at {}", voltage);
         voltage_stream.open(voltage);
 
         if (!voltage_stream.good())
-            SPDLOG_DEBUG("Intel hwmon: failed to open voltage reading {}", voltage);
+            SPDLOG_DEBUG("hwmon: failed to open voltage reading {}", voltage);
     }
 
-    auto fan_speed = hwmon + "/fan1_input"; // Xe DRM doesn't support this yet
-    if (!fs::exists(fan_speed)) {
-        SPDLOG_DEBUG("Intel hwmon: Fan RPM reading not found at {}", hwmon);
+    if (fan_speed.empty()) {
+        SPDLOG_DEBUG("hwmon: Fan RPM reading not found at {}", hwmon);
     } else {
-        SPDLOG_DEBUG("Intel hwmon: Fan RPM reading found at {}", fan_speed);
+        SPDLOG_DEBUG("hwmon: Fan RPM reading found at {}", fan_speed);
         fan_speed_stream.open(fan_speed);
 
         if (!fan_speed_stream.good())
-            SPDLOG_DEBUG("Intel hwmon: failed to open fan RPM reading {}", fan_speed);
+            SPDLOG_DEBUG("hwmon: failed to open fan RPM reading {}", fan_speed);
     }
 
-    auto temp = hwmon + "/temp1_input"; // Xe DRM doesn't support this yet
-    if (!fs::exists(temp)) {
-        SPDLOG_DEBUG("Intel hwmon: Temperature reading not found at {}", hwmon);
+    if (temp.empty()) {
+        SPDLOG_DEBUG("hwmon: Temperature reading not found at {}", hwmon);
     } else {
-        SPDLOG_DEBUG("Intel hwmon: Temperature reading found at {}", temp);
+        SPDLOG_DEBUG("hwmon: Temperature reading found at {}", temp);
         temp_stream.open(temp);
 
         if (!temp_stream.good())
-            SPDLOG_DEBUG("Intel hwmon: failed to open temperature reading {}", temp);
+            SPDLOG_DEBUG("hwmon: failed to open temperature reading {}", temp);
     }
 
-    auto energy = hwmon + (module == "i915" ? "/energy1_input" : "/energy2_input");
-    if (!fs::exists(energy)) {
-        SPDLOG_DEBUG("Intel hwmon: Energy reading not found at {}", hwmon);
+    if (energy.empty()) {
+        SPDLOG_DEBUG("hwmon: Energy reading not found at {}", hwmon);
     } else {
-        SPDLOG_DEBUG("Intel hwmon: Energy reading found at {}", energy);
+        SPDLOG_DEBUG("hwmon: Energy reading found at {}", energy);
         energy_stream.open(energy);
 
         if (!energy_stream.good())
-            SPDLOG_DEBUG("Intel hwmon: failed to open energy reading {}", energy);
+            SPDLOG_DEBUG("hwmon: failed to open energy reading {}", energy);
 
         // Initialize value for the first time, otherwise delta will be very large
         // and your gpu power usage will be like 1 million watts for a second.

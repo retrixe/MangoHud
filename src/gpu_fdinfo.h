@@ -59,7 +59,7 @@ private:
 
     float get_memory_used();
 
-    void find_intel_hwmon();
+    void find_hwmon();
     int get_current_voltage();
     int get_current_fan_speed();
     int get_current_temp();
@@ -112,8 +112,7 @@ public:
             drm_engine_type, drm_memory_type
         );
 
-        if (module == "i915" || module == "xe")
-            find_intel_hwmon();
+        find_hwmon();
 
         if (module == "i915")
             find_i915_gt_dir();
